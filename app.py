@@ -1,7 +1,7 @@
 """
-Stacks AI — Enterprise Hybrid RAG Suite
-Featuring Unified ChromaDB Retrieval, BM25 + Cross-Encoder Reranking, SHA-256 Deduplication,
-Grounded Context Injection, Query Expansion, and Robust Error Handling.
+Stacks AI — Advanced Hybrid RAG & Study Suite (v5.0)
+Featuring Token-Aware Context Streaming, Unified ChromaDB Core, Multi-Topic Quiz Engine,
+BM25 + Cross-Encoder Reranking, and SHA-256 Deduplication.
 """
 
 import os
@@ -27,10 +27,10 @@ except ImportError:
     HAS_OCR = False
 
 # ---------------------------------------------------------------
-# Page Configuration & Modern Styling
+# Page Configuration & Styling
 # ---------------------------------------------------------------
 st.set_page_config(
-    page_title="Stacks AI — Enterprise Hybrid RAG Suite",
+    page_title="Stacks AI — Hybrid RAG & Learning Engine",
     page_icon="📚",
     layout="wide"
 )
@@ -113,18 +113,17 @@ html, body, [class*="css"] {
 </style>
 
 <div class="stacks-header">
-    <div class="stacks-eyebrow">Enterprise Hybrid RAG Suite · Unified ChromaDB Core</div>
+    <div class="stacks-eyebrow">Production RAG Architecture · ChromaDB Vector Engine v5.0</div>
     <div class="stacks-title">🎓 Stacks AI</div>
 </div>
 """, unsafe_allow_html=True)
 
-SYSTEM_PROMPT = """You are a highly precise document assistant.
+SYSTEM_PROMPT = """You are a highly precise academic document assistant.
 Answer the question using ONLY the provided context excerpts below.
 For every key claim or fact you state, cite its exact source tag in square brackets, e.g., [Doc: Physics.pdf, Page 12].
 If the answer cannot be determined strictly from the provided context, state:
 "I could not find this information in the uploaded documents."
 Do not extrapolate or use external facts."""
-
 
 # ---------------------------------------------------------------
 # Core Cached Model Loaders
@@ -141,13 +140,11 @@ def load_cross_encoder():
 def get_chroma_client():
     return chromadb.PersistentClient(path="./stacks_chroma_db")
 
-
 # ---------------------------------------------------------------
-# Document Parsing, Deduplication & Indexing
+# Document Processing & Indexing Core
 # ---------------------------------------------------------------
 def compute_file_hash(file_bytes):
     return hashlib.sha256(file_bytes).hexdigest()
-
 
 def extract_pdf_pages(file, file_bytes, enable_ocr=False):
     pages = []
@@ -156,7 +153,7 @@ def extract_pdf_pages(file, file_bytes, enable_ocr=False):
     for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
         
-        # Fallback OCR for empty/scanned pages
+        # OCR Fallback
         if not text.strip() and enable_ocr and HAS_OCR:
             try:
                 images = convert_from_bytes(file_bytes, first_page=i+1, last_page=i+1)
@@ -170,7 +167,6 @@ def extract_pdf_pages(file, file_bytes, enable_ocr=False):
             
     return pages
 
-
 def safe_json_parse(raw_text):
     try:
         return json.loads(raw_text)
@@ -183,7 +179,6 @@ def safe_json_parse(raw_text):
         except Exception:
             pass
     return []
-
 
 def rewrite_query(user_query, chat_history, client):
     if not chat_history:
@@ -208,12 +203,10 @@ Standalone Search Query:"""
     except Exception:
         return user_query
 
-
 def build_unified_index(uploaded_files, embedder, enable_ocr, progress_bar, status_text):
     start_time = time.time()
     chroma_client = get_chroma_client()
     
-    # Recreate Collection on Reset
     try:
         chroma_client.delete_collection("stacks_collection")
     except Exception:
@@ -225,7 +218,7 @@ def build_unified_index(uploaded_files, embedder, enable_ocr, progress_bar, stat
     processed_hashes = set()
     total_pages = 0
 
-    status_text.text("📖 Processing PDFs & checking duplicates...")
+    status_text.text("📖 Processing PDFs & Checking File Hashes...")
     progress_bar.progress(20)
 
     for f in uploaded_files:
@@ -250,14 +243,12 @@ def build_unified_index(uploaded_files, embedder, enable_ocr, progress_bar, stat
     if not all_chunks:
         return None, [], 0, 0, 0
 
-    status_text.text("⚡ Building BM25 Index & Vectorizing into ChromaDB...")
+    status_text.text("⚡ Vectorizing Context & Building BM25 Index...")
     progress_bar.progress(60)
 
-    # BM25 Keyword Engine
     tokenized_corpus = [c["text"].lower().split() for c in all_chunks]
     bm25_index = BM25Okapi(tokenized_corpus)
 
-    # Dense Vector Persistence in ChromaDB
     texts = [c["text"] for c in all_chunks]
     embeddings = embedder.encode(texts, convert_to_numpy=True).tolist()
 
@@ -270,22 +261,21 @@ def build_unified_index(uploaded_files, embedder, enable_ocr, progress_bar, stat
 
     elapsed_time = round(time.time() - start_time, 2)
     progress_bar.progress(100)
-    status_text.text("✅ Unified Index Active!")
+    status_text.text("✅ Unified Vector Base Ready!")
     
     return bm25_index, all_chunks, total_pages, len(embeddings), elapsed_time
 
-
-def hybrid_retrieve_and_rerank(query, embedder, reranker, bm25_index, chunks, target_doc="All Documents", final_k=4):
+def hybrid_retrieve_and_rerank(query, embedder, reranker, bm25_index, chunks, target_doc="All Documents", final_k=6):
     chroma_client = get_chroma_client()
     collection = chroma_client.get_collection("stacks_collection")
     
-    # 1. Vector Search via ChromaDB
+    # Dense Search
     q_emb = embedder.encode([query], convert_to_numpy=True).tolist()
     where_filter = {"source": target_doc} if target_doc != "All Documents" else None
 
     chroma_results = collection.query(
         query_embeddings=q_emb,
-        n_results=min(15, len(chunks)),
+        n_results=min(20, len(chunks)),
         where=where_filter
     )
     
@@ -294,10 +284,10 @@ def hybrid_retrieve_and_rerank(query, embedder, reranker, bm25_index, chunks, ta
         for cid in chroma_results["ids"][0]:
             candidate_indices.add(int(cid.split("_")[1]))
 
-    # 2. Keyword Search via BM25
+    # Sparse BM25 Search
     tokenized_query = query.lower().split()
     bm25_scores = bm25_index.get_scores(tokenized_query)
-    top_bm25_indices = sorted(range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True)[:15]
+    top_bm25_indices = sorted(range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True)[:20]
 
     for idx in top_bm25_indices:
         if target_doc == "All Documents" or chunks[idx]["source"] == target_doc:
@@ -307,13 +297,12 @@ def hybrid_retrieve_and_rerank(query, embedder, reranker, bm25_index, chunks, ta
     if not candidates:
         return []
 
-    # 3. Cross-Encoder Reranking
+    # Cross-Encoder Reranking
     pairs = [[query, c["text"]] for c in candidates]
     rerank_scores = reranker.predict(pairs)
 
     reranked = [{**c, "rerank_score": float(s)} for c, s in zip(candidates, rerank_scores)]
     return sorted(reranked, key=lambda x: x["rerank_score"], reverse=True)[:final_k]
-
 
 # ---------------------------------------------------------------
 # Session State Engine
@@ -347,14 +336,14 @@ with st.sidebar:
     process_clicked = st.button("⚡ Build Index", use_container_width=True)
 
     st.divider()
-    st.markdown("**📊 Index Stats**")
+    st.markdown("**📊 Database Stats**")
     st.text(f"• Documents: {len(st.session_state.uploaded_files)}")
-    st.text(f"• Pages Indexed: {st.session_state.stats['pages']}")
-    st.text(f"• Total Chunks: {len(st.session_state.chunks)}")
-    st.text(f"• Build Time: {st.session_state.stats['time']}s")
+    st.text(f"• Pages Processed: {st.session_state.stats['pages']}")
+    st.text(f"• Vector Chunks: {len(st.session_state.chunks)}")
+    st.text(f"• Index Time: {st.session_state.stats['time']}s")
 
     st.divider()
-    if st.button("🗑 Reset Database & Session", use_container_width=True):
+    if st.button("🗑 Reset Vector Storage & Session", use_container_width=True):
         try:
             get_chroma_client().delete_collection("stacks_collection")
         except Exception:
@@ -382,13 +371,13 @@ if process_clicked and uploaded_files:
     st.rerun()
 
 # ---------------------------------------------------------------
-# Dashboard Readiness Indicator
+# System Status
 # ---------------------------------------------------------------
 is_ready = st.session_state.bm25_index is not None
 cols = st.columns(4)
 for i, (label, active) in enumerate([
     ("Documents", is_ready), ("ChromaDB Engine", is_ready),
-    ("Flashcards", len(st.session_state.flashcards) > 0),
+    ("Flashcard Generator", len(st.session_state.flashcards) > 0),
     ("Quiz Engine", len(st.session_state.quiz_data) > 0)
 ]):
     with cols[i]:
@@ -427,7 +416,7 @@ with tab_chat:
         if not is_ready:
             st.error("Please upload PDFs and build the index first.")
         elif not active_groq_key:
-            st.error("Please provide a Groq API Key under Settings.")
+            st.error("Please configure your Groq API Key under Settings.")
         else:
             st.session_state.messages.append({"role": "user", "content": question})
             with st.chat_message("user"):
@@ -441,18 +430,14 @@ with tab_chat:
                     retrieved = hybrid_retrieve_and_rerank(
                         expanded_query, embedder, reranker,
                         st.session_state.bm25_index, st.session_state.chunks,
-                        target_doc=doc_scope
+                        target_doc=doc_scope, final_k=6
                     )
                     
                     if not retrieved:
                         st.warning("No relevant information found.")
                     else:
-                        # Construct ground truth context block
-                        context_blocks = []
-                        for c in retrieved:
-                            context_blocks.append(f"[Doc: {c['source']}, Page {c['page']}]\n{c['text']}")
-                        
-                        full_context = "\n\n".join(context_blocks)[:3500] # Truncate token budget safety
+                        context_blocks = [f"[Doc: {c['source']}, Page {c['page']}]\n{c['text']}" for c in retrieved]
+                        full_context = "\n\n".join(context_blocks)[:8000]
                         prompt = f"Context Excerpts:\n{full_context}\n\nQuestion: {question}"
 
                         stream = client.chat.completions.create(
@@ -461,18 +446,27 @@ with tab_chat:
                             temperature=0.1, stream=True
                         )
                         
+                        # Fix: Token-by-token UI rendering loop
                         st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-                        response_text = st.write_stream(stream)
+                        response_placeholder = st.empty()
+                        full_response = ""
+                        
+                        for chunk in stream:
+                            if chunk.choices[0].delta.content:
+                                full_response += chunk.choices[0].delta.content
+                                response_placeholder.markdown(full_response + "▌")
+                        
+                        response_placeholder.markdown(full_response)
                         st.markdown('</div>', unsafe_allow_html=True)
 
-                        with st.expander("📄 View Grounded Search Analytics & Sources"):
-                            st.caption(f"**Expanded Search Query:** `{expanded_query}`")
+                        with st.expander("📄 View Search Analytics & Grounded Citations"):
+                            st.caption(f"**Expanded Query:** `{expanded_query}`")
                             for item in retrieved:
                                 st.markdown(f'<div class="citation-box">📄 <b>{item["source"]}</b> | Page {item["page"]}<br><i>"{item["text"][:140]}..."</i><br><b>Rerank Score:</b> {item["rerank_score"]:.4f}</div>', unsafe_allow_html=True)
 
-                        st.session_state.messages.append({"role": "assistant", "content": response_text})
+                        st.session_state.messages.append({"role": "assistant", "content": full_response})
                 except Exception as e:
-                    st.error(f"Error executing LLM query pipeline: {str(e)}")
+                    st.error(f"Error executing query pipeline: {str(e)}")
 
 # --- TAB 2: Flashcards & Anki Export ---
 with tab_cards:
@@ -487,10 +481,17 @@ with tab_cards:
             if st.button("✨ Generate Cards", use_container_width=True):
                 try:
                     client = Groq(api_key=active_groq_key)
-                    top_chunks = hybrid_retrieve_and_rerank("important definitions formulas concepts overview", embedder, reranker, st.session_state.bm25_index, st.session_state.chunks, target_doc=card_doc, final_k=8)
-                    sample_text = "\n\n".join([c["text"] for c in top_chunks])[:3500]
+                    # Targeted hybrid search instead of random sampling
+                    top_chunks = hybrid_retrieve_and_rerank(
+                        "important concepts definitions formulas summary laws principles theorems",
+                        embedder, reranker, st.session_state.bm25_index, st.session_state.chunks,
+                        target_doc=card_doc, final_k=12
+                    )
+                    sample_text = "\n\n".join([c["text"] for c in top_chunks])[:8000]
                     
-                    prompt = f"Generate {card_count} flashcards as a JSON array with 'question' and 'answer' keys from this context:\n{sample_text}"
+                    prompt = f"""Generate exactly {card_count} flashcards as a JSON array with 'question' and 'answer' keys.
+Use ONLY key facts and definitions from this context:\n{sample_text}"""
+
                     res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
                     st.session_state.flashcards = safe_json_parse(res.choices[0].message.content)
                 except Exception as e:
@@ -515,8 +516,12 @@ with tab_concepts:
         if st.button("📌 Extract Core Concepts", use_container_width=True):
             try:
                 client = Groq(api_key=active_groq_key)
-                top_chunks = hybrid_retrieve_and_rerank("key concepts principles summary definitions", embedder, reranker, st.session_state.bm25_index, st.session_state.chunks, target_doc=concept_doc, final_k=10)
-                prompt = "Extract key terms, definitions, and formulas as bullet points from context:\n\n" + "\n\n".join([c["text"] for c in top_chunks])[:3500]
+                top_chunks = hybrid_retrieve_and_rerank(
+                    "definitions concepts formulas examples important exam questions summary laws",
+                    embedder, reranker, st.session_state.bm25_index, st.session_state.chunks,
+                    target_doc=concept_doc, final_k=15
+                )
+                prompt = "Extract key terms, definitions, and formulas as structured Markdown bullet points from context:\n\n" + "\n\n".join([c["text"] for c in top_chunks])[:8000]
                 res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
                 st.session_state.key_concepts = res.choices[0].message.content
             except Exception as e:
@@ -533,17 +538,35 @@ with tab_quiz:
         with q1:
             quiz_doc = st.selectbox("Document Scope", options=["All Documents"] + [f.name for f in st.session_state.uploaded_files], key="qz_doc")
         with q2:
-            quiz_diff = st.selectbox("Difficulty", ["Balanced Mix", "Foundational (Easy)", "Exam Standard (Hard)"])
+            quiz_diff = st.selectbox("Difficulty Profile", ["Balanced Mix", "Foundational (Easy)", "Exam Standard (Hard)"])
         with q3:
             if st.button("📝 Synthesize Quiz", use_container_width=True):
                 try:
                     client = Groq(api_key=active_groq_key)
-                    top_chunks = hybrid_retrieve_and_rerank("core topics test questions problems theory", embedder, reranker, st.session_state.bm25_index, st.session_state.chunks, target_doc=quiz_doc, final_k=8)
-                    prompt = f"""Generate a 4-question multiple choice quiz at '{quiz_diff}' level.
-                    Return ONLY a JSON array with 'question', 'options' (4 strings), 'correct_index' (0-3), and 'explanation'.
-                    Context:\n""" + "\n\n".join([c["text"] for c in top_chunks])[:3500]
+                    # Broad context retrieval for multi-topic questions
+                    top_chunks = hybrid_retrieve_and_rerank(
+                        "definitions concepts formulas examples important exam questions summary laws principles",
+                        embedder, reranker, st.session_state.bm25_index, st.session_state.chunks,
+                        target_doc=quiz_doc, final_k=15
+                    )
                     
-                    res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role": "user", "content": prompt}])
+                    quiz_prompt = f"""Generate exactly 10 multiple-choice questions based on the context below.
+Rules:
+- Difficulty Profile: {quiz_diff}
+- Use ONLY facts explicitly stated in the provided context.
+- Cover different distinct topics from across the context. Do NOT repeat concepts.
+- Each question MUST have four options. Exactly ONE option is correct.
+- Return ONLY valid JSON in a array of objects format.
+- Keys required per object: 'question' (string), 'options' (array of 4 strings), 'correct_index' (integer 0-3), 'explanation' (string).
+
+Context:
+""" + "\n\n".join([c["text"] for c in top_chunks])[:8000]
+
+                    res = client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": quiz_prompt}],
+                        temperature=0.2
+                    )
                     st.session_state.quiz_data = safe_json_parse(res.choices[0].message.content)
                 except Exception as e:
                     st.error(f"Quiz generation failed: {str(e)}")
@@ -552,11 +575,28 @@ with tab_quiz:
             with st.form("quiz_form"):
                 user_answers = []
                 for idx, q in enumerate(st.session_state.quiz_data):
-                    st.markdown(f"**Q{idx+1}: {q['question']}**")
-                    choice = st.radio("Options:", options=q['options'], key=f"q_{idx}")
+                    st.markdown(f"**Q{idx+1}: {q.get('question','')}**")
+                    options = q.get('options', ["Option 1", "Option 2", "Option 3", "Option 4"])
+                    choice = st.radio("Select Answer:", options=options, key=f"q_{idx}")
                     user_answers.append(choice)
                     st.divider()
                 
-                if st.form_submit_button("Submit Quiz"):
-                    score = sum(1 for idx, q in enumerate(st.session_state.quiz_data) if q['options'].index(user_answers[idx]) == q['correct_index'])
-                    st.metric("Final Score", f"{score} / {len(st.session_state.quiz_data)}")
+                if st.form_submit_button("Submit Answers"):
+                    score = 0
+                    for idx, q in enumerate(st.session_state.quiz_data):
+                        opts = q.get('options', [])
+                        c_idx = q.get('correct_index', 0)
+                        if opts and opts.index(user_answers[idx]) == c_idx:
+                            score += 1
+                    
+                    st.metric("Final Quiz Score", f"{score} / {len(st.session_state.quiz_data)}")
+                    
+                    with st.expander("🔍 Review Detailed Answer Explanations"):
+                        for idx, q in enumerate(st.session_state.quiz_data):
+                            opts = q.get('options', [])
+                            c_idx = q.get('correct_index', 0)
+                            correct_str = opts[c_idx] if c_idx < len(opts) else "N/A"
+                            st.markdown(f"**Q{idx+1}:** {q.get('question','')}")
+                            st.markdown(f"• **Correct Answer:** {correct_str}")
+                            st.markdown(f"• **Explanation:** {q.get('explanation','')}")
+                            st.divider()
