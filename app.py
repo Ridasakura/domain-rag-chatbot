@@ -250,4 +250,202 @@ def generate_flashcards(client, chunks, count=5, model="llama-3.1-8b-instant"):
     try:
         raw_text = response.choices[0].message.content.strip()
         if "```json" in raw_text:
-            raw_text = raw_text.split("
+            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+        return json.loads(raw_text)
+    except Exception:
+        return []
+
+
+def generate_key_concepts(client, chunks, model="llama-3.1-8b-instant"):
+    """Extracts major concepts and bullet points from indexed document chunks."""
+    sample_text = "\n\n".join([c["text"] for c in chunks[:12]])
+    prompt = f"""
+    Based ONLY on the following context, extract key terms, formulas, and critical concepts 
+    suitable for exam preparation. Use clear bullet points and markdown bolding.
+
+    Context:
+    {sample_text}
+    """
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+    return response.choices[0].message.content
+
+
+# ---------------------------------------------------------------
+# Sidebar: API key, upload, process, clear chat
+# ---------------------------------------------------------------
+with st.sidebar:
+    st.markdown("## Access")
+
+    groq_key = st.text_input("Groq API Key", type="password",
+                              help="Get a free key at [console.groq.com/keys](https://console.groq.com/keys)")
+
+    st.markdown("## Your Documents")
+
+    uploaded_files = st.file_uploader(
+        "Upload PDF documents", type=["pdf"], accept_multiple_files=True
+    )
+
+    process_clicked = st.button("Process Documents", use_container_width=True)
+
+    if uploaded_files:
+        st.write("**Uploaded files:**")
+        for f in uploaded_files:
+            st.write(f"- {f.name}")
+
+    st.divider()
+    if st.button("Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.flashcards = []
+        st.session_state.key_concepts = ""
+        st.rerun()
+
+# ---------------------------------------------------------------
+# Session state
+# ---------------------------------------------------------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "index" not in st.session_state:
+    st.session_state.index = None
+if "chunks" not in st.session_state:
+    st.session_state.chunks = []
+if "flashcards" not in st.session_state:
+    st.session_state.flashcards = []
+if "key_concepts" not in st.session_state:
+    st.session_state.key_concepts = ""
+
+embedder = load_embedder()
+
+# ---------------------------------------------------------------
+# Process documents
+# ---------------------------------------------------------------
+if process_clicked:
+    if not uploaded_files:
+        st.sidebar.error("Please upload at least one PDF first.")
+    else:
+        with st.spinner("Extracting text, chunking, and building vector index..."):
+            index, chunks = build_index(uploaded_files, embedder)
+            st.session_state.index = index
+            st.session_state.chunks = chunks
+        if index is None:
+            st.sidebar.error("No extractable text found in the uploaded PDF(s).")
+        else:
+            st.sidebar.success(f"Indexed {len(chunks)} chunks from {len(uploaded_files)} document(s).")
+            # Clear previous outputs on new document load
+            st.session_state.flashcards = []
+            st.session_state.key_concepts = ""
+
+# ---------------------------------------------------------------
+# Helper function for rendering sources
+# ---------------------------------------------------------------
+def render_sources(sources):
+    tags = "".join(
+        f'<span style="display:inline-block; font-family:\'JetBrains Mono\',monospace; '
+        f'font-size:0.75rem; color:#F3F4F6; background-color:#1E293B; border:1px solid #374151; '
+        f'border-radius:4px; padding:3px 8px; margin:3px 6px 3px 0;">📎 {s}</span>'
+        for s in sources
+    )
+    st.markdown(tags, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------
+# Main Tabbed Interface
+# ---------------------------------------------------------------
+tab_chat, tab_cards, tab_concepts = st.tabs(["💬 Q&A Chat", "🎴 Flashcards", "📌 Key Concepts"])
+
+# --- TAB 1: Chat ---
+with tab_chat:
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg["role"] == "assistant" and msg.get("sources"):
+                with st.expander("Cited from"):
+                    render_sources(msg["sources"])
+
+    question = st.chat_input("Ask a question about your uploaded documents...")
+
+    if question:
+        if st.session_state.index is None:
+            st.error("Please upload PDF(s) and click 'Process Documents' first.")
+        elif not groq_key:
+            st.error("Please enter your Groq API key in the sidebar first.")
+        else:
+            st.session_state.messages.append({"role": "user", "content": question})
+            with st.chat_message("user"):
+                st.markdown(question)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Retrieving relevant passages and generating answer..."):
+                    client = Groq(api_key=groq_key)
+                    retrieved = retrieve(question, embedder, st.session_state.index, st.session_state.chunks)
+                    answer = generate_answer(client, question, retrieved)
+
+                    seen = set()
+                    sources = []
+                    for r in retrieved:
+                        key = f"{r['source']}, page {r['page']}"
+                        if key not in seen:
+                            sources.append(key)
+                            seen.add(key)
+
+                    st.markdown(answer)
+                    with st.expander("Cited from"):
+                        render_sources(sources)
+
+            st.session_state.messages.append({
+                "role": "assistant", "content": answer, "sources": sources
+            })
+
+    if not st.session_state.messages:
+        st.info("📖 Add your API key and documents in the sidebar, click **Process Documents**, then ask your first question below.")
+
+
+# --- TAB 2: Flashcards ---
+with tab_cards:
+    st.subheader("Study Flashcards")
+    if st.session_state.index is None:
+        st.info("Upload and process documents to generate study flashcards.")
+    elif not groq_key:
+        st.warning("Please provide a Groq API key in the sidebar to use flashcards.")
+    else:
+        col_btn, _ = st.columns([1, 3])
+        with col_btn:
+            if st.button("Generate Flashcards", use_container_width=True):
+                with st.spinner("Analyzing material & building flashcards..."):
+                    client = Groq(api_key=groq_key)
+                    st.session_state.flashcards = generate_flashcards(client, st.session_state.chunks)
+
+        if st.session_state.flashcards:
+            cols = st.columns(2)
+            for idx, card in enumerate(st.session_state.flashcards):
+                with cols[idx % 2]:
+                    st.markdown(f"""
+                    <div class="flashcard-container">
+                        <div class="flashcard">
+                            <div class="flashcard-title">Card #{idx + 1}</div>
+                            <div class="flashcard-body">Q: {card.get('question', '')}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    with st.expander("Reveal Answer"):
+                        st.write(card.get('answer', ''))
+
+
+# --- TAB 3: Key Concepts ---
+with tab_concepts:
+    st.subheader("Core Document Concepts")
+    if st.session_state.index is None:
+        st.info("Upload and process documents to extract key concept summaries.")
+    elif not groq_key:
+        st.warning("Please provide a Groq API key in the sidebar.")
+    else:
+        if st.button("Extract Concepts & Terms", use_container_width=True):
+            with st.spinner("Extracting critical terms and definitions..."):
+                client = Groq(api_key=groq_key)
+                st.session_state.key_concepts = generate_key_concepts(client, st.session_state.chunks)
+
+        if st.session_state.key_concepts:
+            st.markdown(st.session_state.key_concepts)
