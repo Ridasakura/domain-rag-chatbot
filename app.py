@@ -1,5 +1,5 @@
 """
-Stacks AI — Enterprise Hybrid RAG Suite (v4.0)
+Stacks AI — Enterprise Hybrid RAG Suite
 Featuring Unified ChromaDB Retrieval, BM25 + Cross-Encoder Reranking, SHA-256 Deduplication,
 Grounded Context Injection, Query Expansion, and Robust Error Handling.
 """
