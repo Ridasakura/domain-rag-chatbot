@@ -1,11 +1,13 @@
 """
-Domain-Specific RAG Chatbot
+Domain-Specific RAG Chatbot & Study Suite
 A Streamlit app that answers questions from uploaded PDFs using
 Retrieval-Augmented Generation (RAG), grounded strictly in the
-uploaded documents, with source (document + page) citation.
+uploaded documents, with source citation, interactive flashcards,
+and key concepts extraction.
 """
 
 import os
+import json
 import streamlit as st
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -17,167 +19,124 @@ from groq import Groq
 # ---------------------------------------------------------------
 # Page setup
 # ---------------------------------------------------------------
-st.set_page_config(page_title="Stacks — Document Q&A", page_icon="📚", layout="wide")
+st.set_page_config(page_title="Stacks — Student Study Hub", page_icon="📚", layout="wide")
 
+# Enhanced Custom Styles
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,600;1,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-/* Dynamic Theme Variables */
-:root {
-    --brand-accent: #0284C7;
-    --brand-accent-hover: #0369A1;
-    --brand-accent-bg: #F0F9FF;
-    --brand-accent-border: #BAE6FD;
-    --text-primary: #0F172A;
-    --text-muted: #64748B;
-    --header-bg: #F8FAFC;
-    --border-color: #E2E8F0;
-    --card-bg: #FFFFFF;
-    --sidebar-bg: #F1F5F9;
-}
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --brand-accent: #38BDF8;
-        --brand-accent-hover: #0EA5E9;
-        --brand-accent-bg: #0C4A6E20;
-        --brand-accent-border: #0369A1;
-        --text-primary: #F8FAFC;
-        --text-muted: #94A3B8;
-        --header-bg: #0F172A;
-        --border-color: #1E293B;
-        --card-bg: #1E293B;
-        --sidebar-bg: #0B0F19;
-    }
-}
+.stApp { background-color: #0B0F19; }
 
-/* Base Typography & Fonts */
-html, body, [class*="css"] { 
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; 
-}
-
-/* Custom Header Banner */
+/* Header */
 .stacks-header { 
-    padding: 2rem 2rem 1.8rem 2rem; 
+    padding: 1.8rem 2rem 1.2rem 2rem; 
+    border-bottom: 1px solid #1E293B; 
+    margin-bottom: 1.5rem; 
+    background: linear-gradient(180deg, #111827 0%, #0B0F19 100%);
     border-radius: 12px;
-    background: var(--header-bg);
-    border: 1px solid var(--border-color);
-    margin-bottom: 2rem; 
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+}
+.stacks-eyebrow {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; letter-spacing: 0.18em;
+    color: #F59E0B; text-transform: uppercase; margin-bottom: 0.4rem; font-weight: 600;
+}
+.stacks-title {
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 2.6rem;
+    color: #F3F4F6; margin: 0; line-height: 1.1;
+}
+.stacks-sub { color: #9CA3AF; font-size: 0.98rem; margin-top: 0.5rem; max-width: 680px; }
+
+/* Sidebar */
+section[data-testid="stSidebar"] { background-color: #070A10; border-right: 1px solid #1E293B; }
+section[data-testid="stSidebar"] h2 {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; letter-spacing: 0.14em;
+    color: #F59E0B; text-transform: uppercase;
 }
 
-.stacks-eyebrow {
-    font-family: 'JetBrains Mono', monospace; 
-    font-size: 0.75rem; 
-    font-weight: 500;
-    letter-spacing: 0.15em;
-    color: var(--brand-accent); 
-    text-transform: uppercase; 
+/* Flashcards UI */
+.flashcard-container {
+    perspective: 1000px;
+    margin-bottom: 1rem;
+}
+.flashcard {
+    background: #111827;
+    border: 1px solid #374151;
+    border-radius: 10px;
+    padding: 1.5rem;
+    min-height: 160px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.flashcard:hover {
+    border-color: #F59E0B;
+    transform: translateY(-2px);
+}
+.flashcard-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: #F59E0B;
+    text-transform: uppercase;
     margin-bottom: 0.5rem;
 }
-
-.stacks-title {
-    font-family: 'Fraunces', serif; 
-    font-weight: 600; 
-    font-size: 2.2rem;
-    color: var(--text-primary); 
-    margin: 0; 
-    line-height: 1.2;
+.flashcard-body {
+    font-size: 1.05rem;
+    color: #E5E7EB;
+    font-weight: 500;
 }
 
-.stacks-sub { 
-    color: var(--text-muted); 
-    font-size: 0.95rem; 
-    margin-top: 0.6rem; 
-    max-width: 650px; 
-    line-height: 1.5;
-}
-
-/* Sidebar Custom Styling */
-section[data-testid="stSidebar"] { 
-    background-color: var(--sidebar-bg); 
-    border-right: 1px solid var(--border-color); 
-}
-
-section[data-testid="stSidebar"] h2 {
-    font-family: 'JetBrains Mono', monospace; 
-    font-size: 0.8rem; 
-    letter-spacing: 0.12em;
-    color: var(--brand-accent); 
-    text-transform: uppercase;
-}
-
-/* Chat Message Cards */
+/* Chat bubbles */
 [data-testid="stChatMessage"] {
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 1rem;
-    margin-bottom: 0.8rem;
-    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+    background-color: #111827; border: 1px solid #1E293B; border-radius: 8px;
 }
 
-/* Sources Citation Cards */
+/* Sources expander */
 [data-testid="stExpander"] {
-    border: 1px solid var(--brand-accent-border) !important; 
-    border-radius: 8px !important; 
-    background-color: var(--brand-accent-bg) !important;
+    border: 1px dashed #F59E0B !important; border-radius: 6px; background-color: #0F172A;
 }
-
 [data-testid="stExpander"] summary {
-    font-family: 'JetBrains Mono', monospace; 
-    font-size: 0.78rem; 
-    color: var(--brand-accent) !important;
-    font-weight: 500;
-    letter-spacing: 0.05em; 
-    text-transform: uppercase;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: #F59E0B !important;
+    letter-spacing: 0.06em; text-transform: uppercase;
 }
 
-/* Custom Styled Source Tag */
-.source-tag {
-    display: inline-flex;
-    align-items: center;
-    font-family: 'JetBrains Mono', monospace; 
-    font-size: 0.75rem; 
-    color: var(--brand-accent); 
-    background-color: var(--brand-accent-bg); 
-    border: 1px solid var(--brand-accent-border); 
-    border-radius: 6px; 
-    padding: 4px 10px; 
-    margin: 4px 6px 4px 0;
-    font-weight: 500;
-}
-
-/* Interactive Buttons */
+/* Buttons */
 .stButton button {
-    font-family: 'JetBrains Mono', monospace; 
-    font-size: 0.82rem; 
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    border: 1px solid var(--brand-accent); 
-    color: var(--brand-accent); 
-    background-color: transparent;
-    border-radius: 8px;
-    transition: all 0.2s ease-in-out;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; letter-spacing: 0.04em;
+    border: 1px solid #F59E0B; color: #F59E0B; background-color: transparent;
+    transition: all 0.2s ease;
+}
+.stButton button:hover { background-color: #F59E0B; color: #0B0F19; font-weight: 600; }
+
+/* Tabs UI */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    border-bottom: 1px solid #1E293B;
+}
+.stTabs [data-baseweb="tab"] {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: #9CA3AF;
+    background-color: #111827;
+    border-radius: 6px 6px 0 0;
+    padding: 8px 16px;
+}
+.stTabs [aria-selected="true"] {
+    color: #F59E0B !important;
+    border-bottom: 2px solid #F59E0B !important;
 }
 
-.stButton button:hover { 
-    background-color: var(--brand-accent); 
-    color: #FFFFFF; 
-    border-color: var(--brand-accent);
-}
-
-/* Chat Input Bar */
-[data-testid="stChatInput"] { 
-    border-radius: 10px;
-    border-color: var(--border-color); 
-}
+/* Chat input */
+[data-testid="stChatInput"] { border-color: #1E293B; }
 </style>
 
 <div class="stacks-header">
-    <div class="stacks-eyebrow">Domain-Specific RAG · Retrieval-Augmented Q&A</div>
-    <div class="stacks-title">📚 Stacks</div>
-    <div class="stacks-sub">Upload your documents and ask questions in plain language. Every answer is pulled and cited from your own material — nothing invented, nothing assumed.</div>
+    <div class="stacks-eyebrow">Smart Study Engine · RAG Powered</div>
+    <div class="stacks-title">🎓 Stacks AI</div>
+    <div class="stacks-sub">Transform your course PDFs into interactive Q&A, instant flashcards, and key concept summaries with grounded citations.</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -267,114 +226,28 @@ def generate_answer(client, question, retrieved_chunks, model="llama-3.1-8b-inst
 
 
 # ---------------------------------------------------------------
-# Sidebar: API key, upload, process, clear chat
+# Extended Student Features: Flashcards & Key Concepts
 # ---------------------------------------------------------------
-with st.sidebar:
-    st.markdown("## Access")
+def generate_flashcards(client, chunks, count=5, model="llama-3.1-8b-instant"):
+    """Generates study flashcards from indexed document chunks."""
+    sample_text = "\n\n".join([c["text"] for c in chunks[:10]])
+    prompt = f"""
+    Based ONLY on the following context, generate {count} flashcards for studying.
+    Return ONLY a valid JSON array of objects, where each object has keys "question" and "answer".
+    Example format:
+    [
+      {{"question": "What is X?", "answer": "X is Y."}}
+    ]
 
-    groq_key = st.text_input("Groq API Key", type="password",
-                              help="Get a free key at console.groq.com/keys")
-
-    st.markdown("## Your Documents")
-
-    uploaded_files = st.file_uploader(
-        "Upload PDF documents", type=["pdf"], accept_multiple_files=True
+    Context:
+    {sample_text}
+    """
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3
     )
-
-    process_clicked = st.button("Process Documents", use_container_width=True)
-
-    if uploaded_files:
-        st.write("**Uploaded files:**")
-        for f in uploaded_files:
-            st.write(f"- {f.name}")
-
-    st.divider()
-    if st.button("Clear Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
-
-# ---------------------------------------------------------------
-# Session state
-# ---------------------------------------------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "index" not in st.session_state:
-    st.session_state.index = None
-if "chunks" not in st.session_state:
-    st.session_state.chunks = []
-
-embedder = load_embedder()
-
-# ---------------------------------------------------------------
-# Process documents
-# ---------------------------------------------------------------
-if process_clicked:
-    if not uploaded_files:
-        st.sidebar.error("Please upload at least one PDF first.")
-    else:
-        with st.spinner("Extracting text, chunking, and building the vector index..."):
-            index, chunks = build_index(uploaded_files, embedder)
-            st.session_state.index = index
-            st.session_state.chunks = chunks
-        if index is None:
-            st.sidebar.error("No extractable text found in the uploaded PDF(s).")
-        else:
-            st.sidebar.success(f"Indexed {len(chunks)} chunks from {len(uploaded_files)} document(s).")
-
-# ---------------------------------------------------------------
-# Chat history
-# ---------------------------------------------------------------
-def render_sources(sources):
-    tags = "".join(
-        f'<span class="source-tag">📎 {s}</span>'
-        for s in sources
-    )
-    st.markdown(tags, unsafe_allow_html=True)
-
-
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg["role"] == "assistant" and msg.get("sources"):
-            with st.expander("Cited from"):
-                render_sources(msg["sources"])
-
-# ---------------------------------------------------------------
-# Chat input
-# ---------------------------------------------------------------
-question = st.chat_input("Ask a question about your uploaded documents...")
-
-if question:
-    if st.session_state.index is None:
-        st.error("Please upload PDF(s) and click 'Process Documents' first.")
-    elif not groq_key:
-        st.error("Please enter your Groq API key in the sidebar first.")
-    else:
-        st.session_state.messages.append({"role": "user", "content": question})
-        with st.chat_message("user"):
-            st.markdown(question)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Retrieving relevant passages and generating answer..."):
-                client = Groq(api_key=groq_key)
-                retrieved = retrieve(question, embedder, st.session_state.index, st.session_state.chunks)
-                answer = generate_answer(client, question, retrieved)
-
-                seen = set()
-                sources = []
-                for r in retrieved:
-                    key = f"{r['source']}, page {r['page']}"
-                    if key not in seen:
-                        sources.append(key)
-                        seen.add(key)
-
-                st.markdown(answer)
-                with st.expander("Cited from"):
-                    render_sources(sources)
-
-        st.session_state.messages.append({
-            "role": "assistant", "content": answer, "sources": sources
-        })
-
-if not st.session_state.messages:
-    st.info("📖 Add your API key and documents in the sidebar, click **Process Documents**, then ask your first question below.")
+    try:
+        raw_text = response.choices[0].message.content.strip()
+        if "```json" in raw_text:
+            raw_text = raw_text.split("
