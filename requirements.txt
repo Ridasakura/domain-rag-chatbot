@@ -2,7 +2,10 @@ streamlit
 pypdf
 langchain-text-splitters
 sentence-transformers
-faiss-cpu
-numpy
+rank-bm25
+chromadb
 groq
+numpy
 python-dotenv
+pytesseract
+pdf2image
